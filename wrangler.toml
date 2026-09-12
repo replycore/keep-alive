@@ -1,0 +1,23 @@
+name = "aclclouds-keepalive"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# keep_vars = true：部署时保留面板里已配置的变量/Secret，不删除也不覆盖。
+# 即使 CF Git 的部署命令被重置回默认值，配置里的这一项也始终生效。
+keep_vars = true
+
+# Cron：每 3 天运行一次（0 点 UTC）。可按需调整。
+[triggers]
+crons = ["0 0 */3 * *"]
+
+# ============================================================================
+# 变量管理（方案 A）
+#   - 敏感配置（API_KEY / TG_BOT_TOKEN / TG_CHAT_ID / WEBUI_PASSWORD /
+#     ADMIN_TOKEN）不在本文件里写，只放在面板：
+#     Settings → Variables and Secrets（建议用 Secret，不要用明文 Variable）。
+#     这些名字配置里没有 → 部署时永远不会被覆盖或删除（keep_vars 兜底）。
+#   - 非敏感可选项需要时在面板添加 Variable：
+#     API_BASE（默认内置 aclclouds.com/api，切换面板才设）
+#     SERVER_IDS（服务器白名单，逗号分隔）
+#   - 部署命令填 npx wrangler deploy 即可（keep_vars=true 已写在此配置中）。
+# ============================================================================

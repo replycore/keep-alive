@@ -1,0 +1,13 @@
+# 敏感配置 / 凭据（不提交）
+.dev.vars
+.dev.vars.local
+.dev.vars.production
+
+# 依赖与产物
+node_modules/
+dist/
+.wrangler/
+
+# 日志
+logs/
+*.log

@@ -1,0 +1,14 @@
+# 本地开发变量示例（复制为 .dev.vars，不提交）
+
+# 必填
+API_KEY=ptlc_your_api_key_here
+
+# API_BASE 可选（默认 aclclouds.com/api；切换其它 Pterodactyl 面板才需设置）
+# API_BASE=https://your-panel.example/api
+
+# 可选
+# WEBUI_PASSWORD=your_webui_password
+# ADMIN_TOKEN=xxx
+# TG_BOT_TOKEN=xxx
+# TG_CHAT_ID=xxx
+# SERVER_IDS=c2567e5c,abc123
