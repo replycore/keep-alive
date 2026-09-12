@@ -1,0 +1,33 @@
+name = "fridaydev-keepalive"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# keep_vars = true：部署时保留面板里已配置的变量/Secret，不删除也不覆盖。
+# 即使 CF Git 的部署命令被重置回默认值，配置里的这一项也始终生效。
+keep_vars = true
+
+# Cron：每 4 天运行一次（每月 1/5/9/13/17/21/25/29 日 00:00 UTC）。
+# 免费服 5 天一轮、剩 ≤2 天才可续期，4 天间隔正好落在续期窗口内。
+[triggers]
+crons = ["0 0 */4 * *"]
+
+# ============================================================================
+# 变量管理（方案 A）
+#   - 敏感配置（FD_EMAIL / FD_PASSWORD / TG_BOT_TOKEN / TG_CHAT_ID /
+#     WEBUI_PASSWORD / ADMIN_TOKEN）不在本文件里写，只放在面板：
+#     Settings → Variables and Secrets（建议用 Secret，不要用明文 Variable）。
+#     这些名字配置里没有 → 部署时永远不会被覆盖或删除（keep_vars 兜底）。
+#   - 本文件 [vars] 只放非敏感默认值。
+#   - 部署命令填 npx wrangler deploy 即可（keep_vars=true 已写在此配置中）。
+# ============================================================================
+
+[vars]
+# 非敏感默认值（可公开；部署会自动带上，需要时才在面板覆盖）
+FD_BASE = "https://fridaydev.fr"
+
+# 可选 KV 绑定（缓存门户会话，避免每次用密码重登）：
+# 建好 namespace 后在面板添加绑定即可，无需写在此文件：
+# [kv_namespaces]
+# [[kv_namespaces]]
+# binding = "FD_KV"
+# id = "<你的 KV namespace id>"

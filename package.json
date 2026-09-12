@@ -1,0 +1,15 @@
+{
+  "name": "fridaydev-keepalive",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "FridayDev portal auto-renew Cloudflare Worker",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy --keep-vars",
+    "check": "node --check src/index.js"
+  },
+  "devDependencies": {
+    "wrangler": "^3.114.0"
+  }
+}
