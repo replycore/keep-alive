@@ -1,18 +1,7 @@
 /**
- * FridayDev 免费服务器自动续期 Cloudflare Worker
- *
- * 针对 https://control.fridaydev.fr / https://fridaydev.fr 编写。
- * 该控制面板是标准 Pterodactyl，没有原 keep-alive（aclclouds 专用）
- * 所需的 /api/client/servers/{id}/upgrade/renew 自定义路由，续期实际由
- * fridaydev 自有计费门户完成：
- *
- *   1. POST /php/login.php               邮箱+密码登录 -> 会话 cookie
- *   2. GET  /php/get_services.php        列出服务（含免费计划续期窗口）
- *   3. POST /php/renew_free_service.php  {uuid} 免费服续期 5 天
- *   4. POST /php/renew_server.php        {uuid} 付费/被挂起服续期（扣余额）
- *
+ * FridayDev 免费服务器自动续期 Cloudflare 
  * 特性：
- *   - 定时（默认每 6 小时）自动检查并续期，结果发 Telegram
+ *   - 定时（默认每天）自动检查并续期，结果发 Telegram
  *   - 会话 cookie 可缓存在 CF KV（可选），否则每次运行重新登录
  *   - WebUI 密码登录控制台 / API 手动触发
  *
