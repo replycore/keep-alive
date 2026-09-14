@@ -1,0 +1,78 @@
+name: Host-Ship Auto Renew
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # 每天北京时间 08:00 自动检查
+    # GitHub cron 使用 UTC
+    # UTC 00:00 = 北京时间 08:00
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright requests "requests[socks]"
+          python -m playwright install --with-deps chromium
+
+      - name: Setup optional VLESS/VMess/Trojan node
+        env:
+          NODE_LINK: ${{ secrets.NODE_LINK }}
+        run: |
+          if [ -n "$NODE_LINK" ]; then
+            echo "NODE_LINK detected, setting up local proxy..."
+
+            bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+
+          else
+            echo "IS_PROXY=false" >> "$GITHUB_ENV"
+            echo "No NODE_LINK, direct connection will be used."
+          fi
+
+      - name: Run renew
+        env:
+          SERVER_URL: ${{ secrets.SERVER_URL }}
+          HOSTSHIP_LOGIN: ${{ secrets.HOSTSHIP_LOGIN }}
+          HOSTSHIP_PASSWORD: ${{ secrets.HOSTSHIP_PASSWORD }}
+
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+
+          MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+
+          IS_PROXY: ${{ env.IS_PROXY }}
+          PROXY_SERVER: ${{ env.PROXY_SERVER }}
+
+        run: python hostship_renew.py
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hostship-debug-screenshots
+          path: |
+            hostship_*.png
+          if-no-files-found: ignore
+
+      - name: Cleanup proxy
+        if: always()
+        run: |
+          pkill -f sing-box || true
+          rm -f sing-box sing-box-config.json sing-box.log || true
