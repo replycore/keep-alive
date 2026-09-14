@@ -1,0 +1,39 @@
+name: aclclouds Auto Renew
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每天北京时间 08:00 自动检查（GitHub cron 用 UTC，正好 08:00 标准合理值）
+
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run renew (pull-with-proxy, API)
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          API_BASE: ${{ secrets.API_BASE }}
+          SERVER_IDS: ${{ secrets.SERVER_IDS }}
+          PROXY_SERVER: ${{ secrets.PROXY_SERVER }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python aclclouds_renew.py
