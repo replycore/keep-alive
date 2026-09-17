@@ -457,6 +457,129 @@ def find_renew_button(page):
     return None
 
 
+def wait_dialog(page, timeout_ms=10000):
+    """等确认对话框出现，返回 dialog locator，超时返回 None。"""
+    deadline = time.monotonic() + timeout_ms / 1000
+
+    while time.monotonic() < deadline:
+        try:
+            dialog = page.locator(
+                '[role="dialog"]'
+            ).last
+
+            if (
+                dialog.count()
+                and dialog.is_visible()
+            ):
+                return dialog
+
+        except Exception:
+            pass
+
+        page.wait_for_timeout(500)
+
+    return None
+
+
+def click_renew_now(page, dialog):
+    """在确认对话框里点 Renew now，返回是否点过。
+
+    用 expect_response 包住点击：Renew now 必然触发后端请求，
+    没抓到请求说明没点上（按钮 disabled / 被遮挡等）。
+    """
+    candidates = [
+        dialog.get_by_role(
+            "button",
+            name=re.compile(
+                r"^Renew\s*now$",
+                re.I,
+            ),
+        ),
+        dialog.locator(
+            'button:has-text("Renew now")'
+        ),
+    ]
+
+    target = None
+
+    for group in candidates:
+        try:
+            for i in range(group.count()):
+                item = group.nth(i)
+
+                if not item.is_visible():
+                    continue
+
+                try:
+                    if item.is_disabled():
+                        continue
+
+                except Exception:
+                    pass
+
+                name = (
+                    item.inner_text()
+                    or ""
+                ).strip()
+
+                if re.search(
+                    r"cancel|close",
+                    name,
+                    re.I,
+                ):
+                    continue
+
+                target = item
+                break
+
+        except Exception:
+            pass
+
+        if target is not None:
+            break
+
+    if target is None:
+        return False
+
+    try:
+        name = (
+            target.inner_text()
+            or ""
+        ).strip()
+
+    except Exception:
+        name = "Renew now"
+
+    log(
+        "🖱️ 点击确认按钮："
+        f"{name}"
+    )
+
+    try:
+        with page.expect_response(
+            lambda r: r.request.method in ("POST", "PUT", "PATCH")
+            and r.status < 500,
+            timeout=10000,
+        ) as resp_info:
+            target.click()
+
+        log(
+            "📡 续期请求已发出："
+            f"{resp_info.value.status} "
+            f"{resp_info.value.url[:120]}"
+        )
+
+        return True
+
+    except Exception as exc:
+        log(
+            "⚠️ 点击 Renew now 后 10s 内"
+            f"无后端请求：{exc}"
+        )
+
+        return False
+
+
 def confirm_if_needed(page):
     page.wait_for_timeout(800)
 
@@ -474,115 +597,7 @@ def confirm_if_needed(page):
     except Exception:
         return False
 
-    buttons = [
-        dialog.get_by_role(
-            "button",
-            name=re.compile(
-                r"^Renew\s*now$",
-                re.I,
-            ),
-        ),
-        dialog.get_by_role(
-            "button",
-            name=re.compile(
-                r"^Confirm$",
-                re.I,
-            ),
-        ),
-        dialog.get_by_role(
-            "button",
-            name=re.compile(
-                r"^Renew$",
-                re.I,
-            ),
-        ),
-        dialog.get_by_role(
-            "button",
-            name=re.compile(
-                r"^Yes$",
-                re.I,
-            ),
-        ),
-    ]
-
-    # 精确匹配优先：先找 Renew now / Confirm 这类明确的确认按钮
-    for group in buttons:
-        try:
-            if (
-                group.count()
-                and group.first.is_visible()
-            ):
-                name = (
-                    group.first.inner_text()
-                    or ""
-                ).strip()
-
-                log(
-                    "🖱️ 点击确认按钮："
-                    f"{name}"
-                )
-
-                group.first.click()
-                return True
-
-        except Exception:
-            pass
-
-    # 兜底：对话框里任意包含 renew/confirm 的可见按钮
-    try:
-        fallback = dialog.locator(
-            'button:has-text("Renew"),'
-            'button:has-text("Confirm"),'
-            'button:has-text("Yes")'
-        )
-
-        for i in range(fallback.count()):
-            item = fallback.nth(i)
-
-            try:
-                if not item.is_visible():
-                    continue
-
-                if item.is_disabled():
-                    continue
-
-                name = (
-                    item.inner_text()
-                    or ""
-                ).strip()
-
-                if re.search(
-                    r"cancel|close",
-                    name,
-                    re.I,
-                ):
-                    continue
-
-                log(
-                    "🖱️ 点击确认按钮"
-                    f"（兜底）：{name}"
-                )
-
-                item.click()
-                return True
-
-            except Exception:
-                pass
-
-    except Exception:
-        pass
-
-    page.screenshot(
-        path="hostship_confirm_unknown.png",
-        full_page=True,
-    )
-
-    log(
-        "⚠️ 确认对话框出现，"
-        "但没找到可点的确认按钮"
-    )
-
-    return False
+    return click_renew_now(page, dialog)
 
 
 SUCCESS_WORDS = [
@@ -593,8 +608,12 @@ SUCCESS_WORDS = [
 ]
 
 
-def wait_renew_result(page, before, timeout_ms=30000):
-    """点击 Renew 后轮询确认结果，避免固定 sleep 错过 toast/数字变化。"""
+def wait_renew_result(page, before, timeout_ms=15000):
+    """Renew now 已点后短轮询确认结果（最多 15s，不耗额度）。
+
+    注意：调用本函数前必须已点过对话框里的 Renew now，
+    本函数只做结果确认，不再点击任何确认按钮。
+    """
     deadline = time.monotonic() + timeout_ms / 1000
 
     after = get_renewal_text(page)
@@ -602,45 +621,6 @@ def wait_renew_result(page, before, timeout_ms=30000):
 
     while time.monotonic() < deadline:
         page.wait_for_timeout(2000)
-
-        try:
-            dialog = page.locator(
-                '[role="dialog"]'
-            ).last
-
-            if (
-                dialog.count()
-                and dialog.is_visible()
-            ):
-                try:
-                    title = (
-                        dialog.inner_text()
-                        or ""
-                    )[:200].replace("\n", " | ")
-                    log(f"📋 确认对话框内容：{title}")
-                except Exception:
-                    pass
-
-                if confirm_if_needed(page):
-                    page.wait_for_timeout(3000)
-
-                    after = get_renewal_text(page)
-
-                    return {
-                        "after": after,
-                        "success": True,
-                        "reason": "dialog_open",
-                    }
-
-                # 对话框在但确认按钮没点上：继续轮询，
-                # 不直接判成功，等天数/成功词出现
-                log(
-                    "⚠️ 确认对话框仍在，"
-                    "继续等待结果..."
-                )
-
-        except Exception:
-            pass
 
         after = get_renewal_text(page)
 
@@ -847,38 +827,75 @@ def main():
 
             button.click()
 
-            confirm_if_needed(page)
+            # 等确认对话框弹出（最多 10s），再点 Renew now。
+            # 只有点过 Renew now 才算真正续期。
+            dialog = wait_dialog(page, timeout_ms=10000)
 
-            result = wait_renew_result(
-                page,
-                before,
-                timeout_ms=30000,
-            )
-
-            after = result["after"]
-            success = result["success"]
-
-            if result["reason"] == "dialog_open":
-                log(
-                    "✅ 续期成功："
-                    "确认对话框出现后关闭 "
-                    f"({before} -> {after})"
+            if not dialog:
+                page.screenshot(
+                    path="hostship_no_confirm_dialog.png",
+                    full_page=True,
                 )
 
                 tg(
-                    build_success_message(
-                        before,
-                        after,
+                    build_error_message(
+                        "⚠️ Host-Ship 需要检查",
+                        (
+                            "点击 Renew 后未弹出确认对话框，"
+                            f"当前状态：{before}"
+                        ),
                         ip,
                     )
                 )
 
-                return 0
+                return 1
 
-            if success:
+            try:
+                title = (
+                    dialog.inner_text()
+                    or ""
+                )[:200].replace("\n", " | ")
+
+                log(f"📋 确认对话框内容：{title}")
+
+            except Exception:
+                pass
+
+            # 用 expect_response 监听续期请求，避免“点了但不知道
+            # 有没有发出去”：若 Renew now 没触发任何请求，直接报错。
+            if not click_renew_now(page, dialog):
+                page.screenshot(
+                    path="hostship_confirm_unknown.png",
+                    full_page=True,
+                )
+
+                tg(
+                    build_error_message(
+                        "⚠️ Host-Ship 需要检查",
+                        (
+                            "确认对话框出现但没找到 "
+                            "Renew now 按钮；"
+                            f"当前状态：{before}"
+                        ),
+                        ip,
+                    )
+                )
+
+                return 1
+
+            result = wait_renew_result(
+                page,
+                before,
+                timeout_ms=15000,
+            )
+
+            after = result["after"]
+
+            if result["success"]:
                 log(
                     "✅ 续期成功："
-                    f"{before} -> {after}"
+                    f"{before} -> {after} "
+                    f"(确认:{result['reason']})"
                 )
 
                 tg(
