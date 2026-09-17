@@ -121,6 +121,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
           MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+          SEND_SHOTS: ${{ secrets.SEND_SHOTS }}
 
           IS_PROXY: ${{ env.IS_PROXY }}
           PROXY_SERVER: ${{ env.PROXY_SERVER }}

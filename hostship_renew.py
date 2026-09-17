@@ -30,6 +30,16 @@ MANUAL_RUN = os.getenv(
     "false"
 ).lower() == "true"
 
+# 是否采集步骤截图并发送到 TG。
+# 默认 true（调试期人工检查用）；稳定后在 Secrets 里加
+# SEND_SHOTS=false 即可关闭截图，只保留文字通知。
+# 失败时的错误页截图（hostship_*_fail/error/uncertain.png）
+# 走 Artifact 上传，不受本开关影响。
+SEND_SHOTS = os.getenv(
+    "SEND_SHOTS",
+    "true"
+).lower() not in ("false", "0", "no", "off")
+
 BJ_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -150,6 +160,9 @@ def tg_photo(path, caption=""):
         log("⚠️ Telegram 未配置，跳过截图")
         return False
 
+    if not SEND_SHOTS:
+        return False
+
     try:
         proxies = None
 
@@ -196,7 +209,13 @@ def tg_photo(path, caption=""):
 
 
 def snap(page, name):
-    """截全页图，存 hostship_step_序号_名称.png，返回路径。"""
+    """截视口图，存 hostship_step_序号_名称.png，返回路径。
+
+    SEND_SHOTS=false 时直接跳过，不截图不存文件。
+    """
+    if not SEND_SHOTS:
+        return None
+
     idx = next(
         (
             i
@@ -220,7 +239,13 @@ def snap(page, name):
 
 
 def send_step_shots(collected):
-    """把已采集的步骤截图按顺序发 TG（一张一发，配文字说明）。"""
+    """把已采集的步骤截图按顺序发 TG（一张一发，配文字说明）。
+
+    SEND_SHOTS=false 时直接返回（此时 collected 本就为空）。
+    """
+    if not SEND_SHOTS:
+        return
+
     for name, path in collected:
         label = next(
             (t for k, t in STEP_SHOTS if k == name),
@@ -951,12 +976,14 @@ def main():
                 shots.append((name, path))
 
         def finish(result_text):
-            """先发文字结果，再按顺序发步骤截图。"""
+            """先发文字结果，再按顺序发步骤截图（截图已关闭时只发文字）。"""
             tg(result_text)
             send_step_shots(shots)
 
         try:
             if not login_if_needed(page):
+                # 登录失败截图走 Artifact，不受 SEND_SHOTS 开关影响；
+                # TG 发图才受开关控制。
                 page.screenshot(
                     path="hostship_login_fail.png",
                     full_page=True,
