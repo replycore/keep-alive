@@ -377,35 +377,44 @@ def login_if_needed(page):
     return "/server/" in page.url
 
 
-def get_renewal_text(page):
-    text = page.locator(
-        "body"
-    ).inner_text()
+RENEWAL_PATTERNS = [
+    r"Renewal\s+in\s+\d+\s+Days?",
+    r"Renew\s+in\s+\d+\s+Days?",
+    r"\d+\s+Days?\s+until\s+renewal",
+]
 
-    patterns = [
-        r"Renewal\s+in\s+\d+\s+Days?",
-        r"Renew\s+in\s+\d+\s+Days?",
-        r"\d+\s+Days?\s+until\s+renewal",
-    ]
 
-    for pattern in patterns:
+def parse_renewal_text(text):
+    for pattern in RENEWAL_PATTERNS:
         match = re.search(
             pattern,
-            text,
+            text or "",
             re.I,
         )
 
         if match:
-            return match.group(0)
+            return re.sub(
+                r"\s+",
+                " ",
+                match.group(0),
+            ).strip()
 
     if re.search(
         r"Renew\s+Limit\s+Reached",
-        text,
+        text or "",
         re.I,
     ):
         return "Renew Limit Reached"
 
     return "未识别"
+
+
+def get_renewal_text(page):
+    text = page.locator(
+        "body"
+    ).inner_text()
+
+    return parse_renewal_text(text)
 
 
 def find_renew_button(page):
@@ -460,10 +469,10 @@ def confirm_if_needed(page):
             not dialog.count()
             or not dialog.is_visible()
         ):
-            return
+            return False
 
     except Exception:
-        return
+        return False
 
     buttons = [
         dialog.get_by_role(
@@ -496,10 +505,104 @@ def confirm_if_needed(page):
                 and group.first.is_visible()
             ):
                 group.first.click()
-                return
+                return True
 
         except Exception:
             pass
+
+    return True
+
+
+SUCCESS_WORDS = [
+    "renewed successfully",
+    "renewal successful",
+    "successfully renewed",
+    "renew limit reached",
+]
+
+
+def wait_renew_result(page, before, timeout_ms=30000):
+    """点击 Renew 后轮询确认结果，避免固定 sleep 错过 toast/数字变化。"""
+    deadline = time.monotonic() + timeout_ms / 1000
+
+    after = get_renewal_text(page)
+    last_text = ""
+
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(2000)
+
+        try:
+            dialog = page.locator(
+                '[role="dialog"]'
+            ).last
+
+            if (
+                dialog.count()
+                and dialog.is_visible()
+            ):
+                if confirm_if_needed(page):
+                    page.wait_for_timeout(3000)
+
+                after = get_renewal_text(page)
+
+                return {
+                    "after": after,
+                    "success": True,
+                    "reason": "dialog_open",
+                }
+
+        except Exception:
+            pass
+
+        after = get_renewal_text(page)
+
+        try:
+            last_text = page.locator(
+                "body"
+            ).inner_text()
+
+        except Exception:
+            last_text = ""
+
+        lowered = (last_text or "").lower()
+
+        if any(
+            word in lowered
+            for word in SUCCESS_WORDS
+        ):
+            return {
+                "after": after,
+                "success": True,
+                "reason": "success_word",
+            }
+
+        if (
+            before != "未识别"
+            and after != "未识别"
+            and after != before
+        ):
+            return {
+                "after": after,
+                "success": True,
+                "reason": "days_changed",
+            }
+
+        if re.search(
+            r"Renew\s+Limit\s+Reached",
+            last_text or "",
+            re.I,
+        ):
+            return {
+                "after": "Renew Limit Reached",
+                "success": True,
+                "reason": "limit_reached",
+            }
+
+    return {
+        "after": after,
+        "success": False,
+        "reason": "timeout",
+    }
 
 
 def main():
@@ -658,32 +761,31 @@ def main():
 
             confirm_if_needed(page)
 
-            page.wait_for_timeout(4000)
-
-            after = get_renewal_text(page)
-
-            text_after = page.locator(
-                "body"
-            ).inner_text()
-
-            success_words = [
-                "renewed successfully",
-                "renewal successful",
-                "successfully renewed",
-                "renew limit reached",
-            ]
-
-            success = any(
-                word in text_after.lower()
-                for word in success_words
+            result = wait_renew_result(
+                page,
+                before,
+                timeout_ms=30000,
             )
 
-            if (
-                before != "未识别"
-                and after != "未识别"
-                and after != before
-            ):
-                success = True
+            after = result["after"]
+            success = result["success"]
+
+            if result["reason"] == "dialog_open":
+                log(
+                    "✅ 续期成功："
+                    "确认对话框出现后关闭 "
+                    f"({before} -> {after})"
+                )
+
+                tg(
+                    build_success_message(
+                        before,
+                        after,
+                        ip,
+                    )
+                )
+
+                return 0
 
             if success:
                 log(
@@ -716,7 +818,9 @@ def main():
                     "⚠️ Host-Ship 续期结果需要检查",
                     (
                         f"续期前：{before}；"
-                        f"续期后：{after}"
+                        f"续期后：{after}；"
+                        "已等待 30s 仍无成功标识，"
+                        "请人工到面板确认"
                     ),
                     ip,
                 )
