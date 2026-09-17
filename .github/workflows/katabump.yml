@@ -3,9 +3,9 @@ name: KataBump Auto Renew
 on:
   workflow_dispatch:
   schedule:
-    # 每天北京时间 09:00 / 21:00 各检查一次
-    # GitHub cron 用 UTC：01:00 / 13:00 UTC = 09:00 / 21:00 CST
-    - cron: "0 1,13 * * *"
+    # 每 5 天北京时间 09:00 检查一次（每月 1/6/11/16/21/26/31 日）
+    # GitHub cron 用 UTC：01:00 UTC = 09:00 CST
+    - cron: "0 1 */5 * *"
 
 permissions:
   contents: read

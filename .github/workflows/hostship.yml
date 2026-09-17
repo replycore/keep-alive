@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
 
   schedule:
-    # 每天北京时间 08:00 自动检查
+    # 每 5 天北京时间 08:00 自动检查（每月 1/6/11/16/21/26/31 日）
     # GitHub cron 使用 UTC
     # UTC 00:00 = 北京时间 08:00
-    - cron: "0 0 * * *"
+    - cron: "0 0 */5 * *"
 
 permissions:
   contents: read

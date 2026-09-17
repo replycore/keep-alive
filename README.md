@@ -4,8 +4,8 @@
 
 | 平台 | 脚本 | 工作流 | 定时（北京时间） |
 |------|------|--------|------------------|
-| Host-Ship | `hostship_renew.py` | `Host-Ship Auto Renew` | 每天 08:00 |
-| KataBump | `katabump_renew.py` | `KataBump Auto Renew` | 每天 09:00 / 21:00 |
+| Host-Ship | `hostship_renew.py` | `Host-Ship Auto Renew` | 每 5 天 08:00 |
+| KataBump | `katabump_renew.py` | `KataBump Auto Renew` | 每 5 天 09:00 |
 
 ## 使用方法
 
