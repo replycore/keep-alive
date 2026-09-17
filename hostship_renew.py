@@ -653,13 +653,28 @@ def click_renew_now(page, dialog):
         f"{name}"
     )
 
+    # 先滚动到按钮并等可点击，避免点偏/被遮挡
+    try:
+        target.scroll_into_view_if_needed(timeout=5000)
+    except Exception:
+        pass
+
+    try:
+        target.wait_for(state="visible", timeout=5000)
+    except Exception:
+        pass
+
+    clicked = False
+    click_error = None
+
+    # 策略1：Playwright 点击（带 expect_response 监听后端请求）
     try:
         with page.expect_response(
             lambda r: r.request.method in ("POST", "PUT", "PATCH")
             and r.status < 500,
             timeout=10000,
         ) as resp_info:
-            target.click()
+            target.click(timeout=5000)
 
         log(
             "📡 续期请求已发出："
@@ -670,12 +685,58 @@ def click_renew_now(page, dialog):
         return True
 
     except Exception as exc:
-        log(
-            "⚠️ 点击 Renew now 后 10s 内"
-            f"无后端请求：{exc}"
-        )
+        click_error = exc
+        log(f"⚠️ 常规点击无效，换 JS 直点：{exc}")
 
+    # 策略2：JS dispatchEvent 直点（绕过 actionability 检查）
+    try:
+        target.evaluate("el => el.click()")
+        clicked = True
+        log("🖱️ 已用 JS dispatch 点击 Renew now")
+    except Exception as exc:
+        log(f"❌ JS 点击也失败：{exc}")
         return False
+
+    # 策略2 点完后：等对话框消失 或 后端请求 或 天数变化
+    try:
+        dialog_hidden = False
+        try:
+            dialog.wait_for(state="hidden", timeout=8000)
+            dialog_hidden = True
+        except Exception:
+            pass
+
+        if dialog_hidden:
+            log("✅ 确认对话框已消失，Renew now 已生效")
+            return True
+
+        # 对话框没消失：再看有没有后端请求
+        try:
+            with page.expect_response(
+                lambda r: r.request.method in ("POST", "PUT", "PATCH")
+                and r.status < 500,
+                timeout=5000,
+            ) as resp_info:
+                pass
+
+            log(
+                "📡 续期请求已发出："
+                f"{resp_info.value.status} "
+                f"{resp_info.value.url[:120]}"
+            )
+            return True
+        except Exception:
+            pass
+
+        log(
+            "⚠️ JS 点击后对话框仍在且无后端请求 "
+            f"(首次点击异常：{click_error})"
+        )
+        return False
+
+    except Exception as exc:
+        log(f"⚠️ JS 点击后确认异常：{exc}")
+        return clicked
 
 
 def confirm_if_needed(page):
