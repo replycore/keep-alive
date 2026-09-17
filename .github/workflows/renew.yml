@@ -39,7 +39,10 @@ jobs:
           if [ -n "$NODE_LINK" ]; then
             echo "NODE_LINK detected, setting up local proxy..."
 
-            bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+            # 注意：上游脚本自带 set -e，裸 TCP 配置导致 sing-box 启动失败时
+            # 上游脚本会直接 exit 1（就是你这次日志里的报错），后面的本地修复
+            # 根本没机会执行。此处加 || true，保证修复逻辑一定能跑到。
+            bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) || echo "[WARN] 上游脚本异常退出，继续应用本地修复..."
 
             # Fix 1: 上游脚本对裸 TCP 链接(无 type= 参数)会生成
             # "transport":{"type":"tcp",...}，但 sing-box 没有 tcp/raw
