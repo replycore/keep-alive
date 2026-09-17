@@ -41,6 +41,48 @@ jobs:
 
             bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
+            # Fix: 上游脚本对裸 TCP 链接(无 type= 参数)会生成
+            # "transport":{"type":"tcp",...}，但 sing-box 没有 tcp/raw
+            # 这种 transport 类型，裸 TCP 必须省略 transport 字段。
+            # 已用 sing-box v1.14.1 check 验证：省略=OK，tcp/raw=FAIL，
+            # ws/http/grpc/quic/httpupgrade 保留原样。
+            if [ -f sing-box-config.json ]; then
+              jq '(.outbounds[] | select(.transport?.type == "tcp" or .transport?.type == "raw") | .transport) |= null | del(.. | select(. == null))' \
+                sing-box-config.json > sing-box-config.fixed.json \
+                && mv sing-box-config.fixed.json sing-box-config.json \
+                && echo "[INFO] 已移除裸 TCP transport 字段" \
+                && ./sing-box check -c sing-box-config.json
+
+              if ! pgrep -f "sing-box run" > /dev/null; then
+                echo "[INFO] sing-box 未在运行，重新启动..."
+                ./sing-box run -c sing-box-config.json > sing-box.log 2>&1 &
+                sleep 5
+                if ! pgrep -f "sing-box run" > /dev/null; then
+                  echo "[ERROR] sing-box 进程启动失败，查看日志:"
+                  cat sing-box.log
+                  exit 1
+                fi
+              fi
+
+              echo "[INFO] 测试代理连接..."
+              for i in 1 2 3; do
+                if curl -x socks5://127.0.0.1:1080 -s --max-time 15 https://api.ipify.org > /dev/null 2>&1; then
+                  echo "[INFO] ✅ 代理连接成功"
+                  echo "IS_PROXY=true" >> "$GITHUB_ENV"
+                  echo "PROXY_SERVER=socks5://127.0.0.1:1080" >> "$GITHUB_ENV"
+                  break
+                fi
+                echo "[WARN] 尝试 $i/3..."
+                sleep 3
+                if [ "$i" = "3" ]; then
+                  echo "[ERROR] ❌ 代理连接失败"
+                  echo "---- sing-box 日志 ----"
+                  cat sing-box.log
+                  exit 1
+                fi
+              done
+            fi
+
           else
             echo "IS_PROXY=false" >> "$GITHUB_ENV"
             echo "No NODE_LINK, direct connection will be used."
