@@ -86,6 +86,19 @@ def estimate_renew_date(status):
     )
 
 
+TG_CAPTION_MAX = 900
+
+# 登录后关键步骤截图（按顺序），全部发 TG 供人工检查。
+# 只在登录成功后采集；登录失败只有 1 张登录页截图。
+STEP_SHOTS = [
+    ("logged_in", "1️⃣ 登录后-服务器页"),
+    ("before_renew", "2️⃣ 点击Renew前-状态页"),
+    ("confirm_dialog", "3️⃣ 确认对话框"),
+    ("after_renew_now", "4️⃣ 点击Renew now后"),
+    ("final", "5️⃣ 最终结果页"),
+]
+
+
 def tg(text):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         log("⚠️ Telegram 未配置，跳过通知")
@@ -129,6 +142,91 @@ def tg(text):
             f"❌ Telegram 通知异常: {exc}"
         )
         return False
+
+
+def tg_photo(path, caption=""):
+    """发一张截图到 TG。返回是否成功。"""
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        log("⚠️ Telegram 未配置，跳过截图")
+        return False
+
+    try:
+        proxies = None
+
+        if IS_PROXY:
+            proxies = {
+                "http": PROXY_SERVER,
+                "https": PROXY_SERVER,
+            }
+
+        with open(path, "rb") as f:
+            response = requests.post(
+                (
+                    "https://api.telegram.org/"
+                    f"bot{TG_BOT_TOKEN}/sendPhoto"
+                ),
+                data={
+                    "chat_id": TG_CHAT_ID,
+                    "caption": caption[:TG_CAPTION_MAX],
+                },
+                files={
+                    "photo": (
+                        os.path.basename(path),
+                        f,
+                        "image/png",
+                    ),
+                },
+                timeout=60,
+                proxies=proxies,
+            )
+
+        if response.ok:
+            log(f"✅ TG 截图已发送：{caption}")
+            return True
+
+        log(
+            "❌ TG 截图发送失败: "
+            + response.text[:200]
+        )
+        return False
+
+    except Exception as exc:
+        log(f"❌ TG 截图发送异常: {exc}")
+        return False
+
+
+def snap(page, name):
+    """截全页图，存 hostship_step_序号_名称.png，返回路径。"""
+    idx = next(
+        (
+            i
+            for i, (k, _) in enumerate(STEP_SHOTS)
+            if k == name
+        ),
+        99,
+    )
+    path = f"hostship_step_{idx}_{name}.png"
+
+    try:
+        page.screenshot(
+            path=path,
+            full_page=False,
+        )
+    except Exception as exc:
+        log(f"⚠️ 截图失败 {name}：{exc}")
+        return None
+
+    return path
+
+
+def send_step_shots(collected):
+    """把已采集的步骤截图按顺序发 TG（一张一发，配文字说明）。"""
+    for name, path in collected:
+        label = next(
+            (t for k, t in STEP_SHOTS if k == name),
+            name,
+        )
+        tg_photo(path, f"🖥️ #{server_id()} {label}")
 
 
 def current_ip():
@@ -728,6 +826,17 @@ def main():
         )
 
         page = context.new_page()
+        shots = []
+
+        def take(name):
+            path = snap(page, name)
+            if path:
+                shots.append((name, path))
+
+        def finish(result_text):
+            """先发文字结果，再按顺序发步骤截图。"""
+            tg(result_text)
+            send_step_shots(shots)
 
         try:
             if not login_if_needed(page):
@@ -743,10 +852,15 @@ def main():
                         ip,
                     )
                 )
+                tg_photo(
+                    "hostship_login_fail.png",
+                    f"🖥️ #{server_id()} 登录失败页",
+                )
 
                 return 1
 
             log("✅ 登录成功")
+            take("logged_in")
 
             before = get_renewal_text(page)
 
@@ -767,14 +881,17 @@ def main():
                     "⏳ 目前未到续期时间，"
                     "不进行操作"
                 )
+                take("before_renew")
 
                 if MANUAL_RUN:
-                    tg(
+                    finish(
                         build_check_message(
                             before,
                             ip,
                         )
                     )
+                else:
+                    send_step_shots(shots)
 
                 return 0
 
@@ -785,8 +902,9 @@ def main():
                     path="hostship_no_renew_button.png",
                     full_page=True,
                 )
+                take("before_renew")
 
-                tg(
+                finish(
                     build_error_message(
                         "⚠️ Host-Ship 需要检查",
                         (
@@ -809,14 +927,17 @@ def main():
                 log(
                     "⏳ Renew 按钮当前不可点击"
                 )
+                take("before_renew")
 
                 if MANUAL_RUN:
-                    tg(
+                    finish(
                         build_check_message(
                             before,
                             ip,
                         )
                     )
+                else:
+                    send_step_shots(shots)
 
                 return 0
 
@@ -824,12 +945,14 @@ def main():
                 "🔄 已到续期窗口，"
                 "点击 Renew..."
             )
+            take("before_renew")
 
             button.click()
 
             # 等确认对话框弹出（最多 10s），再点 Renew now。
             # 只有点过 Renew now 才算真正续期。
             dialog = wait_dialog(page, timeout_ms=10000)
+            take("confirm_dialog")
 
             if not dialog:
                 page.screenshot(
@@ -837,7 +960,7 @@ def main():
                     full_page=True,
                 )
 
-                tg(
+                finish(
                     build_error_message(
                         "⚠️ Host-Ship 需要检查",
                         (
@@ -863,13 +986,16 @@ def main():
 
             # 用 expect_response 监听续期请求，避免“点了但不知道
             # 有没有发出去”：若 Renew now 没触发任何请求，直接报错。
-            if not click_renew_now(page, dialog):
+            clicked = click_renew_now(page, dialog)
+            take("after_renew_now")
+
+            if not clicked:
                 page.screenshot(
                     path="hostship_confirm_unknown.png",
                     full_page=True,
                 )
 
-                tg(
+                finish(
                     build_error_message(
                         "⚠️ Host-Ship 需要检查",
                         (
@@ -888,6 +1014,7 @@ def main():
                 before,
                 timeout_ms=15000,
             )
+            take("final")
 
             after = result["after"]
 
@@ -898,7 +1025,7 @@ def main():
                     f"(确认:{result['reason']})"
                 )
 
-                tg(
+                finish(
                     build_success_message(
                         before,
                         after,
@@ -918,13 +1045,13 @@ def main():
                 "但无法确认结果"
             )
 
-            tg(
+            finish(
                 build_error_message(
                     "⚠️ Host-Ship 续期结果需要检查",
                     (
                         f"续期前：{before}；"
                         f"续期后：{after}；"
-                        "已等待 30s 仍无成功标识，"
+                        "已等待 15s 仍无成功标识，"
                         "请人工到面板确认"
                     ),
                     ip,
@@ -953,6 +1080,11 @@ def main():
                     ip,
                 )
             )
+            tg_photo(
+                "hostship_error.png",
+                f"🖥️ #{server_id()} 异常页",
+            )
+            send_step_shots(shots)
 
             return 1
 
