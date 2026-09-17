@@ -24,4 +24,4 @@
 | Secret | 说明 |
 |--------|------|
 | `NODE_LINK` | 代理节点分享链接（vless / vmess / trojan / hysteria2 / tuic / anytls / socks），不填则直连 |
-| `SEND_SHOTS` | 填 `false` 关闭 TG 步骤截图（只收文字通知），默认开启 |
+| `SEND_SHOTS` | 截图模式：默认 `auto`（成功只发文字，失败发 1 张截图）；`steps` 分步截图（调试用）；`false` 完全关闭 |

@@ -30,15 +30,22 @@ MANUAL_RUN = os.getenv(
     "false"
 ).lower() == "true"
 
-# 是否采集步骤截图并发送到 TG。
-# 默认 true（调试期人工检查用）；稳定后在 Secrets 里加
-# SEND_SHOTS=false 即可关闭截图，只保留文字通知。
-# 失败时的错误页截图（hostship_*_fail/error/uncertain.png）
-# 走 Artifact 上传，不受本开关影响。
-SEND_SHOTS = os.getenv(
-    "SEND_SHOTS",
-    "true"
-).lower() not in ("false", "0", "no", "off")
+# 截图模式（三档）：
+# - auto（默认）：成功/未到窗口只发文字；失败时发 1 张当前页截图。
+# - steps：保持分步截图（登录后 5 张按顺序发 TG），用于调试。
+# - off：完全不截图（也不发 TG 图）；失败截图仍存文件走 Artifact。
+# Secrets 里 SEND_SHOTS=true 视为 steps（兼容旧开关）。
+def _shots_mode():
+    v = os.getenv("SEND_SHOTS", "").strip().lower()
+    if v in ("true", "1", "yes", "on", "steps", "debug", "verbose"):
+        return "steps"
+    if v in ("false", "0", "no", "off", "none"):
+        return "off"
+    return "auto"
+
+
+SHOTS_MODE = _shots_mode()
+SEND_SHOTS = SHOTS_MODE == "steps"
 
 BJ_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -154,13 +161,17 @@ def tg(text):
         return False
 
 
-def tg_photo(path, caption=""):
-    """发一张截图到 TG。返回是否成功。"""
+def tg_photo(path, caption="", force=False):
+    """发一张截图到 TG。返回是否成功。
+
+    steps/off 模式由调用方经 snap/send_step_shots 控制；
+    auto 模式失败截图传 force=True 绕过开关。
+    """
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         log("⚠️ Telegram 未配置，跳过截图")
         return False
 
-    if not SEND_SHOTS:
+    if not force and not SEND_SHOTS:
         return False
 
     try:
@@ -208,23 +219,29 @@ def tg_photo(path, caption=""):
         return False
 
 
-def snap(page, name):
-    """截视口图，存 hostship_step_序号_名称.png，返回路径。
+def snap(page, name, force=False):
+    """截视口图并返回路径。
 
-    SEND_SHOTS=false 时直接跳过，不截图不存文件。
+    steps 模式：存 hostship_step_序号_名称.png。
+    auto 模式：force=False 时跳过；失败截图传 force=True，
+    存 hostship_fail_名称.png（发 TG + Artifact）。
+    off 模式：snap(force=False) 跳过；send_fail_shot 只存文件。
     """
-    if not SEND_SHOTS:
+    if not SEND_SHOTS and not force:
         return None
 
-    idx = next(
-        (
-            i
-            for i, (k, _) in enumerate(STEP_SHOTS)
-            if k == name
-        ),
-        99,
-    )
-    path = f"hostship_step_{idx}_{name}.png"
+    if force and not SEND_SHOTS:
+        path = f"hostship_fail_{name}.png"
+    else:
+        idx = next(
+            (
+                i
+                for i, (k, _) in enumerate(STEP_SHOTS)
+                if k == name
+            ),
+            99,
+        )
+        path = f"hostship_step_{idx}_{name}.png"
 
     try:
         page.screenshot(
@@ -232,17 +249,14 @@ def snap(page, name):
             full_page=False,
         )
     except Exception as exc:
-        log(f"⚠️ 截图失败 {name}：{exc}")
+        log(f"截图失败 {name}：{exc}")
         return None
 
     return path
 
 
 def send_step_shots(collected):
-    """把已采集的步骤截图按顺序发 TG（一张一发，配文字说明）。
-
-    SEND_SHOTS=false 时直接返回（此时 collected 本就为空）。
-    """
+    """把已采集的步骤截图按顺序发 TG（steps 模式专用）。"""
     if not SEND_SHOTS:
         return
 
@@ -252,6 +266,23 @@ def send_step_shots(collected):
             name,
         )
         tg_photo(path, f"🖥️ #{server_id()} {label}")
+
+
+def send_fail_shot(page, name, caption):
+    """auto 模式失败截图：存文件，发 TG（force 绕过开关），走 Artifact。
+
+    off 模式：只存文件走 Artifact，不发 TG。
+    """
+    if SHOTS_MODE == "off":
+        try:
+            page.screenshot(path=f"hostship_fail_{name}.png", full_page=False)
+        except Exception:
+            pass
+        return
+
+    path = snap(page, name, force=True)
+    if path:
+        tg_photo(path, caption, force=True)
 
 
 def current_ip():
@@ -975,31 +1006,28 @@ def main():
             if path:
                 shots.append((name, path))
 
-        def finish(result_text):
-            """先发文字结果，再按顺序发步骤截图（截图已关闭时只发文字）。"""
+        def finish(result_text, fail_shot=None, fail_caption=""):
+            """先发文字结果，再发截图。
+
+            steps 模式：按顺序发分步截图。
+            auto 模式：只发 fail_shot 那 1 张（force 绕过开关）。
+            off 模式：fail_shot 仅存文件走 Artifact，不发 TG。
+            """
             tg(result_text)
-            send_step_shots(shots)
+            if SHOTS_MODE == "steps":
+                send_step_shots(shots)
+            elif fail_shot and SHOTS_MODE == "auto":
+                tg_photo(fail_shot, fail_caption, force=True)
 
         try:
             if not login_if_needed(page):
-                # 登录失败截图走 Artifact，不受 SEND_SHOTS 开关影响；
-                # TG 发图才受开关控制。
-                page.screenshot(
-                    path="hostship_login_fail.png",
-                    full_page=True,
+                msg = build_error_message(
+                    "❌ Host-Ship 登录失败",
+                    "登录失败或遇到安全验证",
+                    ip,
                 )
-
-                tg(
-                    build_error_message(
-                        "❌ Host-Ship 登录失败",
-                        "登录失败或遇到安全验证",
-                        ip,
-                    )
-                )
-                tg_photo(
-                    "hostship_login_fail.png",
-                    f"🖥️ #{server_id()} 登录失败页",
-                )
+                tg(msg)
+                send_fail_shot(page, "login", f"🖥️ #{server_id()} 登录失败页")
 
                 return 1
 
@@ -1042,11 +1070,8 @@ def main():
             button = find_renew_button(page)
 
             if not button:
-                page.screenshot(
-                    path="hostship_no_renew_button.png",
-                    full_page=True,
-                )
                 take("before_renew")
+                fail_shot = snap(page, "no_renew_button", force=True)
 
                 finish(
                     build_error_message(
@@ -1056,8 +1081,10 @@ def main():
                             f"Renew 按钮；{before}"
                         ),
                         ip,
-                    )
-                )
+                    ),
+                    fail_shot=fail_shot,
+                    fail_caption=f"🖥️ #{server_id()} 无 Renew 按钮",
+            )
 
                 return 1
 
@@ -1099,10 +1126,7 @@ def main():
             take("confirm_dialog")
 
             if not dialog:
-                page.screenshot(
-                    path="hostship_no_confirm_dialog.png",
-                    full_page=True,
-                )
+                fail_shot = snap(page, "no_confirm_dialog", force=True)
 
                 finish(
                     build_error_message(
@@ -1112,8 +1136,10 @@ def main():
                             f"当前状态：{before}"
                         ),
                         ip,
-                    )
-                )
+                    ),
+                    fail_shot=fail_shot,
+                    fail_caption=f"🖥️ #{server_id()} 无确认对话框",
+            )
 
                 return 1
 
@@ -1134,10 +1160,7 @@ def main():
             take("after_renew_now")
 
             if not clicked:
-                page.screenshot(
-                    path="hostship_confirm_unknown.png",
-                    full_page=True,
-                )
+                fail_shot = snap(page, "confirm_unknown", force=True)
 
                 finish(
                     build_error_message(
@@ -1148,8 +1171,10 @@ def main():
                             f"当前状态：{before}"
                         ),
                         ip,
-                    )
-                )
+                    ),
+                    fail_shot=fail_shot,
+                    fail_caption=f"🖥️ #{server_id()} 确认对话框",
+            )
 
                 return 1
 
@@ -1179,10 +1204,7 @@ def main():
 
                 return 0
 
-            page.screenshot(
-                path="hostship_renew_uncertain.png",
-                full_page=True,
-            )
+            fail_shot = snap(page, "renew_uncertain", force=True)
 
             log(
                 "⚠️ 已点击续期，"
@@ -1199,7 +1221,9 @@ def main():
                         "请人工到面板确认"
                     ),
                     ip,
-                )
+                ),
+                fail_shot=fail_shot,
+                fail_caption=f"🖥️ #{server_id()} 结果未确认",
             )
 
             return 1
@@ -1224,11 +1248,15 @@ def main():
                     ip,
                 )
             )
-            tg_photo(
-                "hostship_error.png",
-                f"🖥️ #{server_id()} 异常页",
-            )
-            send_step_shots(shots)
+            try:
+                page.screenshot(path="hostship_fail_error.png", full_page=False)
+            except Exception:
+                pass
+            if SHOTS_MODE == "steps":
+                send_step_shots(shots)
+                tg_photo("hostship_fail_error.png", f"🖥️ #{server_id()} 异常页", force=True)
+            elif SHOTS_MODE == "auto":
+                tg_photo("hostship_fail_error.png", f"🖥️ #{server_id()} 异常页", force=True)
 
             return 1
 
