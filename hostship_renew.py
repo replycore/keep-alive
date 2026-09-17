@@ -556,8 +556,19 @@ def find_renew_button(page):
 
 
 def wait_dialog(page, timeout_ms=10000):
-    """等确认对话框出现，返回 dialog locator，超时返回 None。"""
+    """等确认对话框出现，返回 dialog locator，超时返回 None。
+
+    判活条件（任一即算出现，对齐上游做法）：
+    1. [role="dialog"] 可见（Radix/HeadlessUI 标准弹窗）
+    2. 可见文本含 "Confirm server renewal"（SweetAlert/自定义弹窗，
+       可能没有 role=dialog，上游用此标题定位）
+    """
     deadline = time.monotonic() + timeout_ms / 1000
+
+    title_re = re.compile(
+        r"Confirm\s+server\s+renewal",
+        re.I,
+    )
 
     while time.monotonic() < deadline:
         try:
@@ -574,6 +585,33 @@ def wait_dialog(page, timeout_ms=10000):
         except Exception:
             pass
 
+        try:
+            title = page.get_by_text(title_re).first
+
+            if (
+                title.count()
+                and title.is_visible()
+            ):
+                # 用标题最近的弹窗容器；没有则退回整个 dialog 作用域
+                container = title.locator(
+                    'xpath=ancestor-or-self::*[@role="dialog"][1]'
+                )
+
+                try:
+                    if (
+                        container.count()
+                        and container.first.is_visible()
+                    ):
+                        return container.first
+
+                except Exception:
+                    pass
+
+                return page.locator("body")
+
+        except Exception:
+            pass
+
         page.wait_for_timeout(500)
 
     return None
@@ -582,7 +620,9 @@ def wait_dialog(page, timeout_ms=10000):
 def click_renew_now(page, dialog):
     """在确认对话框里点 Renew now，返回是否点过。
 
-    用 expect_response 包住点击：Renew now 必然触发后端请求，
+    作用域(dialog)可能是 body 兜底，因此候选同步上游做法：
+    dialog 内优先，全页兜底。上游用 is_visible + is_enabled
+    双检查后直接点击；此处再加 expect_response 监听后端请求，
     没抓到请求说明没点上（按钮 disabled / 被遮挡等）。
     """
     candidates = [
@@ -593,7 +633,17 @@ def click_renew_now(page, dialog):
                 re.I,
             ),
         ),
+        page.get_by_role(
+            "button",
+            name=re.compile(
+                r"^Renew\s*now$",
+                re.I,
+            ),
+        ),
         dialog.locator(
+            'button:has-text("Renew now")'
+        ),
+        page.locator(
             'button:has-text("Renew now")'
         ),
     ]
@@ -605,15 +655,21 @@ def click_renew_now(page, dialog):
             for i in range(group.count()):
                 item = group.nth(i)
 
-                if not item.is_visible():
+                try:
+                    if not item.is_visible():
+                        continue
+                except Exception:
                     continue
 
                 try:
-                    if item.is_disabled():
+                    if not item.is_enabled():
                         continue
-
                 except Exception:
-                    pass
+                    try:
+                        if item.is_disabled():
+                            continue
+                    except Exception:
+                        pass
 
                 name = (
                     item.inner_text()
