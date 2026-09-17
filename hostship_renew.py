@@ -478,6 +478,13 @@ def confirm_if_needed(page):
         dialog.get_by_role(
             "button",
             name=re.compile(
+                r"^Renew\s*now$",
+                re.I,
+            ),
+        ),
+        dialog.get_by_role(
+            "button",
+            name=re.compile(
                 r"^Confirm$",
                 re.I,
             ),
@@ -498,19 +505,84 @@ def confirm_if_needed(page):
         ),
     ]
 
+    # 精确匹配优先：先找 Renew now / Confirm 这类明确的确认按钮
     for group in buttons:
         try:
             if (
                 group.count()
                 and group.first.is_visible()
             ):
+                name = (
+                    group.first.inner_text()
+                    or ""
+                ).strip()
+
+                log(
+                    "🖱️ 点击确认按钮："
+                    f"{name}"
+                )
+
                 group.first.click()
                 return True
 
         except Exception:
             pass
 
-    return True
+    # 兜底：对话框里任意包含 renew/confirm 的可见按钮
+    try:
+        fallback = dialog.locator(
+            'button:has-text("Renew"),'
+            'button:has-text("Confirm"),'
+            'button:has-text("Yes")'
+        )
+
+        for i in range(fallback.count()):
+            item = fallback.nth(i)
+
+            try:
+                if not item.is_visible():
+                    continue
+
+                if item.is_disabled():
+                    continue
+
+                name = (
+                    item.inner_text()
+                    or ""
+                ).strip()
+
+                if re.search(
+                    r"cancel|close",
+                    name,
+                    re.I,
+                ):
+                    continue
+
+                log(
+                    "🖱️ 点击确认按钮"
+                    f"（兜底）：{name}"
+                )
+
+                item.click()
+                return True
+
+            except Exception:
+                pass
+
+    except Exception:
+        pass
+
+    page.screenshot(
+        path="hostship_confirm_unknown.png",
+        full_page=True,
+    )
+
+    log(
+        "⚠️ 确认对话框出现，"
+        "但没找到可点的确认按钮"
+    )
+
+    return False
 
 
 SUCCESS_WORDS = [
@@ -540,16 +612,32 @@ def wait_renew_result(page, before, timeout_ms=30000):
                 dialog.count()
                 and dialog.is_visible()
             ):
+                try:
+                    title = (
+                        dialog.inner_text()
+                        or ""
+                    )[:200].replace("\n", " | ")
+                    log(f"📋 确认对话框内容：{title}")
+                except Exception:
+                    pass
+
                 if confirm_if_needed(page):
                     page.wait_for_timeout(3000)
 
-                after = get_renewal_text(page)
+                    after = get_renewal_text(page)
 
-                return {
-                    "after": after,
-                    "success": True,
-                    "reason": "dialog_open",
-                }
+                    return {
+                        "after": after,
+                        "success": True,
+                        "reason": "dialog_open",
+                    }
+
+                # 对话框在但确认按钮没点上：继续轮询，
+                # 不直接判成功，等天数/成功词出现
+                log(
+                    "⚠️ 确认对话框仍在，"
+                    "继续等待结果..."
+                )
 
         except Exception:
             pass
