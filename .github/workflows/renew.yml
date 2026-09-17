@@ -41,16 +41,36 @@ jobs:
 
             bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
-            # Fix: 上游脚本对裸 TCP 链接(无 type= 参数)会生成
+            # Fix 1: 上游脚本对裸 TCP 链接(无 type= 参数)会生成
             # "transport":{"type":"tcp",...}，但 sing-box 没有 tcp/raw
             # 这种 transport 类型，裸 TCP 必须省略 transport 字段。
             # 已用 sing-box v1.14.1 check 验证：省略=OK，tcp/raw=FAIL，
             # ws/http/grpc/quic/httpupgrade 保留原样。
+            # Fix 2: 上游 trojan 解析只认 sni=，不认旧版 peer= 参数。
+            # 形如 trojan://pass@host:port?peer=SNI 的链接 server_name
+            # 会回退成 IP，导致自签证书校验失败(x509 IP SANs)。
+            # 此处若 server_name 是 IP 且 NODE_LINK 含 peer=，则用
+            # peer 值覆盖 tls.server_name，并置 insecure=true
+            # （openssl 实测：该节点证书 subject=issuer=CN mozilla.org，
+            # 自签名，hpkp 与证书指纹一致，必须跳过系统 CA 校验）。
+            # 已本地实测拨号验证 OK（curl 经 socks 返回出口 IP）。
             if [ -f sing-box-config.json ]; then
-              jq '(.outbounds[] | select(.transport?.type == "tcp" or .transport?.type == "raw") | .transport) |= null | del(.. | select(. == null))' \
+              PEER_HOST="$(echo "$NODE_LINK" | grep -o 'peer=[^&]*' | cut -d= -f2 | head -1)"
+              jq --arg peer "$PEER_HOST" '
+                (.outbounds[]
+                  | select(.transport?.type == "tcp" or .transport?.type == "raw")
+                  | .transport) = null
+                | (.outbounds[]
+                  | select($peer != "" and (.tls.server_name | test("^[0-9.]+$")))
+                  | .tls.server_name) = $peer
+                | (.outbounds[]
+                  | select($peer != "" and (.tls.insecure == false))
+                  | .tls.insecure) = true
+                | del(.. | select(. == null))
+              ' \
                 sing-box-config.json > sing-box-config.fixed.json \
                 && mv sing-box-config.fixed.json sing-box-config.json \
-                && echo "[INFO] 已移除裸 TCP transport 字段" \
+                && echo "[INFO] 已应用配置修复(peer=${PEER_HOST:-无})" \
                 && ./sing-box check -c sing-box-config.json
 
               if ! pgrep -f "sing-box run" > /dev/null; then
