@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright
 
 
 SERVER_URL = os.getenv("SERVER_URL", "").strip()
+PANEL_URL = "https://panel.host-ship.com/"
 HOSTSHIP_LOGIN = os.getenv("HOSTSHIP_LOGIN", "").strip()
 HOSTSHIP_PASSWORD = os.getenv("HOSTSHIP_PASSWORD", "").strip()
 
@@ -421,23 +422,155 @@ def first_visible(page, selectors):
     return None
 
 
-def login_if_needed(page):
+def goto_panel(page):
+    """打开面板首页。返回 True 表示已在登录态（能看到账号信息/服务列表）。"""
     page.goto(
-        SERVER_URL,
+        PANEL_URL,
         wait_until="domcontentloaded",
         timeout=60000,
     )
 
     time.sleep(2)
 
-    body = page.locator(
-        "body"
-    ).inner_text().lower()
+    try:
+        body = page.locator(
+            "body"
+        ).inner_text().lower()
+    except Exception:
+        return False
 
-    if (
-        "/server/" in page.url
-        and "password" not in body
-    ):
+    login_markers = [
+        'input[name="email"]',
+        'input[type="email"]',
+        'input[name="username"]',
+        'input[type="password"]',
+    ]
+
+    for sel in login_markers:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() and loc.is_visible():
+                return False
+        except Exception:
+            pass
+
+    # 没有登录框，且 body 里出现已登录才有的元素（服务卡片/登出等）
+    for marker in ("manage server", "logout", "sign out", "my service"):
+        if marker in body:
+            return True
+
+    # 兜底：不在登录页也算可能已登录，交给后续 MANAGE SERVER 检查
+    return "password" not in body
+
+
+def find_manage_server(page):
+    """在面板首页底部找 MANAGE SERVER 按钮/链接，返回 locator，找不到返回 None。"""
+    candidates = [
+        page.get_by_role(
+            "button",
+            name=re.compile(r"manage\s*server", re.I),
+        ),
+        page.get_by_role(
+            "link",
+            name=re.compile(r"manage\s*server", re.I),
+        ),
+        page.locator('button:has-text("MANAGE SERVER")'),
+        page.locator('a:has-text("MANAGE SERVER")'),
+        page.locator(':text("MANAGE SERVER")'),
+    ]
+
+    for group in candidates:
+        try:
+            count = group.count()
+
+            for i in range(count):
+                item = group.nth(i)
+
+                try:
+                    if item.is_visible():
+                        return item
+                except Exception:
+                    continue
+
+        except Exception:
+            pass
+
+    return None
+
+
+def goto_server_from_panel(page, timeout_ms=15000):
+    """已在面板首页登录态：找 MANAGE SERVER 并点进去，返回 True/False。
+
+    有按钮：滚动到底部确保可见，点击后等待跳到 /server/ 详情页。
+    无按钮：说明账号下没有服务，直接返回 False 走失败流程。
+    """
+    manage = find_manage_server(page)
+
+    if not manage:
+        # 页面可能还没加载完/懒加载在底部，再滚到底等一会儿重试一次
+        try:
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        except Exception:
+            pass
+
+        page.wait_for_timeout(3000)
+        manage = find_manage_server(page)
+
+    if not manage:
+        log("❌ 面板首页未找到 MANAGE SERVER，账号下可能没有服务")
+        return False
+
+    log("✅ 找到 MANAGE SERVER，点击进入服务器页...")
+
+    try:
+        manage.scroll_into_view_if_needed(timeout=5000)
+    except Exception:
+        pass
+
+    try:
+        manage.click(timeout=10000)
+    except Exception as exc:
+        log(f"⚠️ MANAGE SERVER 常规点击无效，换 JS 直点：{exc}")
+        try:
+            manage.evaluate("el => el.click()")
+        except Exception as exc2:
+            log(f"❌ MANAGE SERVER 点击失败：{exc2}")
+            return False
+
+    deadline = time.monotonic() + timeout_ms / 1000
+
+    while time.monotonic() < deadline:
+        try:
+            if "/server/" in page.url:
+                page.wait_for_timeout(2000)
+                return True
+        except Exception:
+            pass
+
+        page.wait_for_timeout(1000)
+
+    # 点击后没跳到详情页：可能是新开标签页
+    try:
+        if len(page.context.pages) > 1:
+            for p in page.context.pages:
+                try:
+                    if "/server/" in p.url:
+                        page = p
+                        page.wait_for_timeout(2000)
+                        return True
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    log(f"❌ 点击 MANAGE SERVER 后未进入服务器页，当前: {page.url}")
+    return False
+
+
+def login_if_needed(page):
+    # 先走面板首页：已登录直接返回 True，未登录才填账号密码
+    if goto_panel(page):
+        log("✅ 面板已是登录态")
         return True
 
     email = first_visible(
@@ -520,15 +653,12 @@ def login_if_needed(page):
         )
         return False
 
-    page.goto(
-        SERVER_URL,
-        wait_until="domcontentloaded",
-        timeout=60000,
-    )
+    # 登录后回到面板首页确认登录态
+    if not goto_panel(page):
+        log("❌ 登录后仍不在面板首页")
+        return False
 
-    page.wait_for_timeout(2000)
-
-    return "/server/" in page.url
+    return True
 
 
 RENEWAL_PATTERNS = [
@@ -1032,6 +1162,31 @@ def main():
                 return 1
 
             log("✅ 登录成功")
+            take("logged_in")
+
+            # 面板首页检查：底部有 MANAGE SERVER 才说明账号下有服务，
+            # 点进去到服务器详情页再找续期按钮；没有则直接走失败流程。
+            if not goto_server_from_panel(page):
+                take("before_renew")
+                fail_shot = snap(page, "no_manage_server", force=True)
+
+                finish(
+                    build_error_message(
+                        "❌ Host-Ship 面板无服务",
+                        (
+                            "登录后面板首页未找到 "
+                            "MANAGE SERVER 按钮，"
+                            "账号下可能没有服务"
+                        ),
+                        ip,
+                    ),
+                    fail_shot=fail_shot,
+                    fail_caption=f"🖥️ #{server_id()} 面板无 MANAGE SERVER",
+                )
+
+                return 1
+
+            log("✅ 已进入服务器详情页")
             take("logged_in")
 
             before = get_renewal_text(page)

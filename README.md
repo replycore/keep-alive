@@ -18,40 +18,50 @@
 
 ## 变量表
 
+以下变量名与代码 `os.getenv(...)` / 工作流 `secrets.*` 完全对应，照抄即可。
+
 ### 公共（通知）
 
-| Secret | 说明 |
-|--------|------|
-| `TG_BOT_TOKEN` | Telegram Bot Token |
-| `TG_CHAT_ID` | 接收通知的 Chat ID |
+| Secret | 代码读取位置 | 说明 |
+|--------|--------------|------|
+| `TG_BOT_TOKEN` | 两脚本 `os.getenv("TG_BOT_TOKEN")` | Telegram Bot Token，不填则跳过通知 |
+| `TG_CHAT_ID` | 两脚本 `os.getenv("TG_CHAT_ID")`，工作流 `secrets.TG_CHAT_ID` | 接收通知的 Chat ID |
 
 ### Host-Ship（必填）
 
-| Secret | 说明 |
-|--------|------|
-| `SERVER_URL` | 服务器详情页地址，如 `https://panel.host-ship.com/server/xxxxxxxx` |
-| `HOSTSHIP_LOGIN` | 面板登录账号/邮箱 |
-| `HOSTSHIP_PASSWORD` | 面板登录密码 |
+| Secret | 代码读取位置 | 说明 |
+|--------|--------------|------|
+| `SERVER_URL` | `os.getenv("SERVER_URL")`，工作流 `secrets.SERVER_URL` | 服务器详情页地址，如 `https://panel.host-ship.com/server/xxxxxxxx`；仅用于校验前缀和通知展示，实际跳转走面板首页 MANAGE SERVER |
+| `HOSTSHIP_LOGIN` | `os.getenv("HOSTSHIP_LOGIN")`，工作流 `secrets.HOSTSHIP_LOGIN` | 面板登录账号/邮箱 |
+| `HOSTSHIP_PASSWORD` | `os.getenv("HOSTSHIP_PASSWORD")`，工作流 `secrets.HOSTSHIP_PASSWORD` | 面板登录密码 |
+
+流程：登录 `https://panel.host-ship.com/`（面板首页）→ 检查底部 MANAGE SERVER
+→ 无按钮则判失败（账号下无服务）→ 有则点击进入 `/server/` 详情页找续期按钮。
 
 ### Host-Ship（可选）
 
-| Secret | 说明 |
-|--------|------|
-| `NODE_LINK` | 代理节点分享链接（vless / vmess / trojan / hysteria2 / tuic / anytls / socks），不填则直连 |
-| `SEND_SHOTS` | 截图模式：默认 `auto`（成功只发文字，失败发 1 张截图）；`steps` 分步截图（调试用）；`false` 完全关闭 |
+| Secret | 代码读取位置 | 说明 |
+|--------|--------------|------|
+| `NODE_LINK` | 工作流 `secrets.NODE_LINK`（脚本不直接读） | 代理节点分享链接（vless / vmess / trojan / hysteria2 / tuic / anytls / socks），不填则直连；工作流连通后自动写 `IS_PROXY` / `PROXY_SERVER` |
+| `SEND_SHOTS` | `os.getenv("SEND_SHOTS")`，工作流 `secrets.SEND_SHOTS` | 截图模式：默认 `auto`（成功只发文字，失败发 1 张截图）；`steps`（或 `true`）分步截图（调试用）；`false` / `off` 完全关闭 |
+| `IS_PROXY` | `os.getenv("IS_PROXY")`，工作流 `env.IS_PROXY` 自动写入 | 是否走代理，由工作流根据 `NODE_LINK` 连通性自动设置，无需手动填 |
+| `PROXY_SERVER` | `os.getenv("PROXY_SERVER")`，工作流 `env.PROXY_SERVER` 自动写入 | 代理地址，默认 `socks5://127.0.0.1:1080`；浏览器、TG 推送、IP 查询共用 |
+| `MANUAL_RUN` | `os.getenv("MANUAL_RUN")`，工作流按 `workflow_dispatch` 自动传入 | 手动 Run 才发"未到续期时间"的检查消息，定时任务不打扰 |
 
 ### KataBump（必填）
 
-| Secret | 说明 |
-|--------|------|
-| `KATA_EMAIL` | KataBump 面板登录邮箱 |
-| `KATA_PASSWORD` | KataBump 面板登录密码 |
+| Secret | 代码读取位置 | 说明 |
+|--------|--------------|------|
+| `KATA_EMAIL` | `os.getenv("KATA_EMAIL")`（`katabump.yml` 传 `secrets.KATA_EMAIL`） | KataBump 面板登录邮箱 |
+| `KATA_PASSWORD` | `os.getenv("KATA_PASSWORD")`（`katabump.yml` 传 `secrets.KATA_PASSWORD`） | KataBump 面板登录密码 |
 
 ### KataBump（可选）
 
-| Secret | 说明 |
-|--------|------|
-| `KATA_SERVER_ID` | 服务器 ID，默认 `185829` |
+| Secret | 代码读取位置 | 说明 |
+|--------|--------------|------|
+| `KATA_SERVER_ID` | `os.getenv("KATA_SERVER_ID")`（`katabump.yml` 传 `secrets.KATA_SERVER_ID`） | 服务器 ID，默认 `185829` |
+
+工作流 `katabump.yml` 同样透传 `TG_BOT_TOKEN` / `TG_CHAT_ID`（与 Host-Ship 共用同一套）。
 
 ## 新增平台
 
