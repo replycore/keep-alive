@@ -27,16 +27,16 @@
 | `TG_BOT_TOKEN` | 两脚本 `os.getenv("TG_BOT_TOKEN")` | Telegram Bot Token，不填则跳过通知 |
 | `TG_CHAT_ID` | 两脚本 `os.getenv("TG_CHAT_ID")`，工作流 `secrets.TG_CHAT_ID` | 接收通知的 Chat ID |
 
-### Host-Ship（必填）
+### Host-Ship（必填，仅 2 个）
 
 | Secret | 代码读取位置 | 说明 |
 |--------|--------------|------|
-| `SERVER_URL` | `os.getenv("SERVER_URL")`，工作流 `secrets.SERVER_URL` | 服务器详情页地址，如 `https://panel.host-ship.com/server/xxxxxxxx`；仅用于校验前缀和通知展示，实际跳转走面板首页 MANAGE SERVER |
 | `HOSTSHIP_LOGIN` | `os.getenv("HOSTSHIP_LOGIN")`，工作流 `secrets.HOSTSHIP_LOGIN` | 面板登录账号/邮箱 |
 | `HOSTSHIP_PASSWORD` | `os.getenv("HOSTSHIP_PASSWORD")`，工作流 `secrets.HOSTSHIP_PASSWORD` | 面板登录密码 |
 
-流程：登录 `https://panel.host-ship.com/`（面板首页）→ 检查底部 MANAGE SERVER
-→ 无按钮则判失败（账号下无服务）→ 有则点击进入 `/server/` 详情页找续期按钮。
+流程：登录面板首页（`PANEL_URL` 硬编码在代码里，无需配置）
+→ 检查底部 MANAGE SERVER → 无按钮则判失败（账号下无服务）
+→ 有则点击进入，服务器详情页地址自动获取（`/server/xxxxxxxx`，仅用于通知展示）。
 
 ### Host-Ship（可选）
 

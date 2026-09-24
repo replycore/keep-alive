@@ -113,7 +113,6 @@ jobs:
 
       - name: Run renew
         env:
-          SERVER_URL: ${{ secrets.SERVER_URL }}
           HOSTSHIP_LOGIN: ${{ secrets.HOSTSHIP_LOGIN }}
           HOSTSHIP_PASSWORD: ${{ secrets.HOSTSHIP_PASSWORD }}
 

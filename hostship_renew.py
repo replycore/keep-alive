@@ -12,8 +12,10 @@ import requests
 from playwright.sync_api import sync_playwright
 
 
-SERVER_URL = os.getenv("SERVER_URL", "").strip()
+# 面板首页地址（硬编码，无需配置）
 PANEL_URL = "https://panel.host-ship.com/"
+# 服务器详情页地址（运行期自动获取：点击 MANAGE SERVER 进入 /server/ 后记录）
+SERVER_URL = ""
 HOSTSHIP_LOGIN = os.getenv("HOSTSHIP_LOGIN", "").strip()
 HOSTSHIP_PASSWORD = os.getenv("HOSTSHIP_PASSWORD", "").strip()
 
@@ -501,9 +503,11 @@ def find_manage_server(page):
 def goto_server_from_panel(page, timeout_ms=15000):
     """已在面板首页登录态：找 MANAGE SERVER 并点进去，返回 True/False。
 
-    有按钮：滚动到底部确保可见，点击后等待跳到 /server/ 详情页。
+    有按钮：滚动到底部确保可见，点击后等待跳到 /server/ 详情页，
+    并把详情页 URL 记录到全局 SERVER_URL（供通知展示用）。
     无按钮：说明账号下没有服务，直接返回 False 走失败流程。
     """
+    global SERVER_URL
     manage = find_manage_server(page)
 
     if not manage:
@@ -543,6 +547,8 @@ def goto_server_from_panel(page, timeout_ms=15000):
         try:
             if "/server/" in page.url:
                 page.wait_for_timeout(2000)
+                SERVER_URL = page.url
+                log(f"🖥 服务器详情页：{SERVER_URL}")
                 return True
         except Exception:
             pass
@@ -557,6 +563,8 @@ def goto_server_from_panel(page, timeout_ms=15000):
                     if "/server/" in p.url:
                         page = p
                         page.wait_for_timeout(2000)
+                        SERVER_URL = p.url
+                        log(f"🖥 服务器详情页：{SERVER_URL}")
                         return True
                 except Exception:
                     continue
@@ -1075,14 +1083,15 @@ def wait_renew_result(page, before, timeout_ms=15000):
 
 
 def main():
-    if not SERVER_URL.startswith(
-        "https://panel.host-ship.com/server/"
+    if (
+        not HOSTSHIP_LOGIN
+        or not HOSTSHIP_PASSWORD
     ):
-        log("❌ SERVER_URL 不正确")
+        log("❌ 缺少 HOSTSHIP_LOGIN / HOSTSHIP_PASSWORD")
 
         tg(
             "❌ Host-Ship 配置错误\n"
-            "SERVER_URL 不是服务器详情页地址"
+            "缺少 HOSTSHIP_LOGIN / HOSTSHIP_PASSWORD"
         )
 
         return 1
