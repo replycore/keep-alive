@@ -58,9 +58,17 @@ jobs:
             # 自签名，hpkp 与证书指纹一致，必须跳过系统 CA 校验）。
             # 已本地实测拨号验证 OK（curl 经 socks 返回出口 IP）。
             if [ -f sing-box-config.json ]; then
+              # hy2 链接参数 -> sing-box 字段映射（已用 sing-box 实测 check 验证）：
+              # peer=/sni=  -> tls.server_name（上游只认 sni=，peer= 会丢成 IP，必须回填；
+              #               自签证书 CN=mozilla.org，SNI 不对连握手都建不起来）
+              # obfs=none   -> 删 obfs 对象（上游把字符串 "none" 当 salamander 密码，
+              #               服务端没开混淆就对不上，直接超时）
+              # hpkp=...    -> sing-box 无指纹 pin 字段，忽略；自签证书本就靠
+              #               insecure=true 跳过系统 CA 校验（见下）
               PEER_HOST="$(echo "$NODE_LINK" | grep -o 'peer=[^&]*' | cut -d= -f2 | head -1)"
               [ -z "$PEER_HOST" ] && PEER_HOST="$(echo "$NODE_LINK" | grep -o 'sni=[^&]*' | cut -d= -f2 | head -1)"
-              jq --arg peer "$PEER_HOST" '
+              HAS_HPKP="$(echo "$NODE_LINK" | grep -c 'hpkp=[^&]*')"
+              jq --arg peer "$PEER_HOST" --argjson hpkp "$HAS_HPKP" '
                 (.outbounds[]
                   | select(.transport?.type == "tcp" or .transport?.type == "raw")
                   | .transport) = null
@@ -68,7 +76,12 @@ jobs:
                   | select($peer != "" and (.tls.server_name | test("^[0-9.]+$")))
                   | .tls.server_name) = $peer
                 | (.outbounds[]
-                  | select($peer != "" and (.tls.insecure == false))
+                  | select(.type == "hysteria2" and (.obfs.password? // "") == "none")
+                  | .obfs) = null
+                | (.outbounds[]
+                  | select(.type == "hysteria2"
+                    and ($hpkp > 0 or $peer != "")
+                    and (.tls.insecure == false))
                   | .tls.insecure) = true
                 | del(.. | select(. == null))
               ' \
