@@ -31,22 +31,23 @@
 
 | Secret | 代码读取位置 | 说明 |
 |--------|--------------|------|
-| `HOSTSHIP_LOGIN` | `os.getenv("HOSTSHIP_LOGIN")`，工作流 `secrets.HOSTSHIP_LOGIN` | 面板登录账号/邮箱 |
-| `HOSTSHIP_PASSWORD` | `os.getenv("HOSTSHIP_PASSWORD")`，工作流 `secrets.HOSTSHIP_PASSWORD` | 面板登录密码 |
+| `HOSTSHIP_SERVER_ID` | `os.getenv("HOSTSHIP_SERVER_ID")`，工作流 `secrets.HOSTSHIP_SERVER_ID` | 服务器 ID（续期请求 URL / 服务器详情页 `/server/<id>` 里可见） |
+| `HOSTSHIP_API_KEY` | `os.getenv("HOSTSHIP_API_KEY")`，工作流 `secrets.HOSTSHIP_API_KEY` | 面板 Account -> API Keys 创建的 **Client** Key（`ptlc_` 开头） |
 
-流程：登录面板首页（`PANEL_URL` 硬编码在代码里，无需配置）
-→ 检查底部 MANAGE SERVER → 无按钮则判失败（账号下无服务）
-→ 有则点击进入，服务器详情页地址自动获取（`/server/xxxxxxxx`，仅用于通知展示）。
+流程（API 模式）：直接调用面板续期接口
+`POST /api/client/servers/<id>/renew`（Bearer 认证），
+连打直到出现 30 天上限提示或用完 `MAX_ATTEMPTS`（默认 5 次、间隔 `RENEW_INTERVAL` 默认 61 秒）。
+无需登录面板、无浏览器依赖。
 
 ### Host-Ship（可选）
 
 | Secret | 代码读取位置 | 说明 |
 |--------|--------------|------|
 | `NODE_LINK` | 工作流 `secrets.NODE_LINK`（脚本不直接读） | 代理节点分享链接（vless / vmess / trojan / hysteria2 / tuic / anytls / socks），不填则直连；工作流连通后自动写 `IS_PROXY` / `PROXY_SERVER` |
-| `SEND_SHOTS` | `os.getenv("SEND_SHOTS")`，工作流 `secrets.SEND_SHOTS` | 截图模式：默认 `auto`（成功只发文字，失败发 1 张截图）；`steps`（或 `true`）分步截图（调试用）；`false` / `off` 完全关闭 |
 | `IS_PROXY` | `os.getenv("IS_PROXY")`，工作流 `env.IS_PROXY` 自动写入 | 是否走代理，由工作流根据 `NODE_LINK` 连通性自动设置，无需手动填 |
-| `PROXY_SERVER` | `os.getenv("PROXY_SERVER")`，工作流 `env.PROXY_SERVER` 自动写入 | 代理地址，默认 `socks5://127.0.0.1:1080`；浏览器、TG 推送、IP 查询共用 |
-| `MANUAL_RUN` | `os.getenv("MANUAL_RUN")`，工作流按 `workflow_dispatch` 自动传入 | 手动 Run 才发"未到续期时间"的检查消息，定时任务不打扰 |
+| `PROXY_SERVER` | `os.getenv("PROXY_SERVER")`，工作流 `env.PROXY_SERVER` 自动写入 | 代理地址，默认 `socks5://127.0.0.1:1080`；面板请求、TG 推送、IP 查询共用 |
+| `MANUAL_RUN` | `os.getenv("MANUAL_RUN")`，工作流按 `workflow_dispatch` 自动传入 | 手动 Run 才发"已达续期上限"等状态消息，定时任务不打扰 |
+| `RENEW_INTERVAL` / `MAX_ATTEMPTS` | `os.getenv(...)` | 请求间隔秒数（默认 61）与最大请求次数（默认 5），一般无需改 |
 
 ### KataBump（必填）
 

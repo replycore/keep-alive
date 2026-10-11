@@ -15,7 +15,8 @@ permissions:
 jobs:
   renew:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # API 模式无需装浏览器，10 分钟足够（含可选代理拨号）
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -29,8 +30,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install playwright requests "requests[socks]"
-          python -m playwright install --with-deps chromium
+          pip install requests "requests[socks]"
 
       - name: Setup optional VLESS/VMess/Trojan node
         env:
@@ -130,28 +130,18 @@ jobs:
 
       - name: Run renew
         env:
-          HOSTSHIP_LOGIN: ${{ secrets.HOSTSHIP_LOGIN }}
-          HOSTSHIP_PASSWORD: ${{ secrets.HOSTSHIP_PASSWORD }}
+          HOSTSHIP_SERVER_ID: ${{ secrets.HOSTSHIP_SERVER_ID }}
+          HOSTSHIP_API_KEY: ${{ secrets.HOSTSHIP_API_KEY }}
 
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
           MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
-          SEND_SHOTS: ${{ secrets.SEND_SHOTS }}
 
           IS_PROXY: ${{ env.IS_PROXY }}
           PROXY_SERVER: ${{ env.PROXY_SERVER }}
 
         run: python hostship_renew.py
-
-      - name: Upload screenshots on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hostship-debug-screenshots
-          path: |
-            hostship_*.png
-          if-no-files-found: ignore
 
       - name: Cleanup proxy
         if: always()
